@@ -69,7 +69,6 @@ impl PortManager {
         let mut rng = self.rng.lock().unwrap();
         let mut rng = &mut *rng;
         let port = *self.pool.iter().choose(&mut rng)?;
-        println!("get port: {}", port);
         self.take(port)
     }
 }

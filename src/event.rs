@@ -32,17 +32,36 @@ pub enum ClientEventResponse {
 }
 
 impl ClientEventResponse {
-    pub fn registered(entrypoint: Vec<String>) -> Self {
+    pub(crate) fn registered(entrypoint: Vec<String>) -> Self {
         Self::Registered {
             status: None,
             entrypoint,
         }
     }
 
-    pub fn registered_failed(status: Status) -> Self {
+    pub(crate) fn registered_failed(status: Status) -> Self {
         Self::Registered {
             status: Some(status),
             entrypoint: vec![],
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn is_registered(&self) -> bool {
+        matches!(self, Self::Registered { .. })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn entrypoint(&self) -> Option<&Vec<String>> {
+        match self {
+            Self::Registered { entrypoint, .. } => Some(entrypoint),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn status(&self) -> Option<&Status> {
+        match self {
+            Self::Registered { status, .. } => status.as_ref(),
         }
     }
 }

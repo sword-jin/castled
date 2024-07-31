@@ -306,16 +306,26 @@ impl DataServer {
 
 #[cfg(test)]
 mod test {
-    use async_shutdown::ShutdownManager;
-    use tokio::time::sleep;
+    use std::{
+        net::{IpAddr, Ipv4Addr},
+        ops::RangeInclusive,
+        vec,
+    };
 
+    use async_shutdown::ShutdownManager;
+    use tokio::{sync::oneshot, time::sleep};
+    use tonic::Code;
+
+    #[cfg(feature = "debug")]
     use crate::debug;
 
     use super::*;
 
     #[tokio::test]
     async fn test_cannot_listen_on_same_vhttp_port() {
+        #[cfg(feature = "debug")]
         debug::setup_logging(6669);
+
         let (_t1, r1) = mpsc::channel(10);
         let shutdown1 = ShutdownManager::new();
         let signal1 = shutdown1.wait_shutdown_triggered();
@@ -335,5 +345,92 @@ mod test {
         shutdown2.trigger_shutdown(()).unwrap();
 
         sleep(std::time::Duration::from_secs(1000)).await;
+    }
+
+    #[tokio::test]
+    async fn test_no_ports_available() {
+        struct Cases {
+            name: &'static str,
+            payload: Payload,
+        }
+
+        let cases = vec![
+            Cases {
+                name: "tcp",
+                payload: Payload::RegisterTcp { port: 0 },
+            },
+            Cases {
+                name: "udp",
+                payload: Payload::RegisterUdp { port: 0 },
+            },
+            // Cases {
+            //     name: "http",
+            //     payload: Payload::RegisterHttp {
+            //         port: 0,
+            //         subdomain: Bytes::new(),
+            //         domain: Bytes::new(),
+            //         random_subdomain: false,
+            //     },
+            // },
+        ];
+
+        for case in cases {
+            println!("running test: {}", case.name);
+
+            let (t1, r1) = mpsc::channel(10);
+            let shutdown = ShutdownManager::new();
+            let signal1 = shutdown.wait_shutdown_triggered();
+            let port_range: RangeInclusive<u16> = 30010..=30014;
+            let exclude_ports = vec![30012];
+            let server = DataServer::new(
+                3100,
+                EntrypointConfig {
+                    port_range: port_range.clone(),
+                    exclude_ports: exclude_ports.clone(),
+                    ip: vec![IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))],
+                    ..Default::default()
+                },
+            );
+            tokio::spawn(async move {
+                server.listen(signal1, r1).await.unwrap();
+            });
+
+            for i in 0..port_range.len() - exclude_ports.len() + 1 {
+                let (incoming_tx, _incoming_rx) = mpsc::channel(10);
+                let (resp_tx, resp_rx) = oneshot::channel();
+                let register_cancel = CancellationToken::new();
+                t1.send(event::ClientEvent {
+                    payload: case.payload.clone(),
+                    resp: resp_tx,
+                    close_listener: register_cancel,
+                    incoming_events: incoming_tx,
+                })
+                .await
+                .unwrap();
+
+                let resp = resp_rx.await.unwrap();
+
+                if i != port_range.len() - exclude_ports.len() {
+                    assert!(resp.is_registered());
+                    let entrypoint = resp.entrypoint().unwrap();
+                    println!("entrypoint: {:?}", entrypoint);
+                    let port = entrypoint[0]
+                        .split(':')
+                        .last()
+                        .unwrap()
+                        .parse::<u16>()
+                        .unwrap();
+                    assert!(port_range.contains(&port));
+                    assert!(!exclude_ports.contains(&port));
+                } else {
+                    assert_eq!(resp.status().unwrap().code(), Code::ResourceExhausted);
+                }
+            }
+
+            shutdown.trigger_shutdown(()).unwrap();
+            shutdown.wait_shutdown_complete().await;
+
+            sleep(std::time::Duration::from_secs(5)).await;
+        }
     }
 }

@@ -111,7 +111,9 @@ pub(crate) async fn create_socket<T: SocketCreator>(
         for _ in 0..150 {
             let mut available_port: Available = match port_manager.get() {
                 None => {
-                    return Err(Status::resource_exhausted("no available port"));
+                    return Err(Status::resource_exhausted(
+                        "no available port in your given range",
+                    ));
                 }
                 Some(port) => port,
             };
@@ -127,6 +129,8 @@ pub(crate) async fn create_socket<T: SocketCreator>(
                 }
             }
         }
-        Err(Status::resource_exhausted("no available port"))
+        Err(Status::resource_exhausted(
+            "no available port in your given range",
+        ))
     }
 }
